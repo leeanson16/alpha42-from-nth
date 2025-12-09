@@ -1,0 +1,5 @@
+PERFORMANCE METRICS - STRATEGY (NO SHORT)
+CAGR (%)                                               53.86                                    39.98
+Sharpe Ratio                                            1.69                                     1.23
+Max Drawdown (%)                                       54.61                                    45.06
+Sortino Ratio                                           2.44                                     1.74
