@@ -1,0 +1,21 @@
+You decide whether to use backtrader library.
+
+Build a backtest of asset allocation, S&P500.
+Weighting formula is rank(vwap-close)/rank(vwap+close) / SUM(rank(vwap-close)/rank(vwap+close))
+each stock has its own rank(vwap-close)/rank(vwap+close)
+vwap=average(OHLC)
+rank is throughout all stocks of a day, rank(vwap-close) = 1 if vwap-close for that stock is smallest
+
+S&P500 data in close_price_data.csv
+
+50,000 capital initially
+
+Keep only the top 22 weighted stocks for each day, the new weight should be normalized (Only normalization happens here)
+
+Only rebalance that stock when over one percent change in shares of that stock, then don't normalize, treat as i have margin
+
+Output target shares and actual shares
+
+Print progress every 2000 days, quick process dates
+
+Comopare with S&P500 B&H return from yfinance
