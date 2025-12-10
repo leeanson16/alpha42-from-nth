@@ -13,6 +13,7 @@ REBALANCE_THRESHOLD = 0.01  # 1% change in shares
 PROGRESS_INTERVAL = 2000
 # STOP_LOSS_PCT = 0.05  # 5% stop loss
 # STOP_LOSS_INACTIVE_DAYS = 250  # Days to keep stock inactive after stop loss
+SP500_BORROWING_FEE_ANNUAL = 0.0035  # 0.35% annualized borrowing fee for short S&P500 (conservative, actual is 0.25%)
 
 def parse_ohlc_data(all_data, close_df):
     """Parse OHLC data from all_stock_data.csv in various formats"""
@@ -108,6 +109,24 @@ def load_data():
     close_df = pd.read_csv('close_price_data.csv', index_col=0, parse_dates=True)
     print(f"Loaded close prices: {close_df.shape[0]} days, {close_df.shape[1]} stocks")
     
+    # Load yield curve data for risk-free rate
+    risk_free_rates = None
+    try:
+        print("Loading yield curve data for risk-free rate...")
+        yield_curve = pd.read_csv('yield-curve-rates-1990-2024.csv')
+        # Parse date column
+        yield_curve['Date'] = pd.to_datetime(yield_curve['Date'], format='%m/%d/%Y')
+        yield_curve.set_index('Date', inplace=True)
+        # Extract 3-month rate (annualized percentage)
+        if '3 Mo' in yield_curve.columns:
+            risk_free_rates = yield_curve['3 Mo'] / 100.0  # Convert percentage to decimal
+            print(f"Loaded risk-free rates: {len(risk_free_rates)} days")
+        else:
+            print("Warning: '3 Mo' column not found in yield curve data")
+    except Exception as e:
+        print(f"Warning: Could not load yield curve data: {e}")
+        risk_free_rates = None
+    
     # Try to load OHLC from all_stock_data.csv
     try:
         print("Loading OHLC data from all_stock_data.csv...")
@@ -129,7 +148,7 @@ def load_data():
                 low_df = low_df.loc[common_dates, common_stocks]
                 
                 print(f"Successfully extracted OHLC data: {len(common_dates)} days, {len(common_stocks)} stocks")
-                return close_df, (open_df, high_df, low_df)
+                return close_df, (open_df, high_df, low_df), risk_free_rates
             else:
                 print("Warning: No common dates/stocks between close_df and OHLC data")
         else:
@@ -141,7 +160,7 @@ def load_data():
         traceback.print_exc()
     
     print("Will approximate VWAP from close prices")
-    return close_df, None
+    return close_df, None, risk_free_rates
 
 def calculate_vwap(close_df, ohlc_data=None):
     """Calculate VWAP = average(OHLC) for each stock each day"""
@@ -205,13 +224,14 @@ def select_top_stocks(weights, top_n=TOP_N_STOCKS):
     
     return top_weights
 
-def run_backtest(close_df, weights_df, enable_sp500_short=True):
+def run_backtest(close_df, weights_df, enable_sp500_short=True, risk_free_rates=None):
     """Run the backtest with rebalancing logic
     
     Args:
         close_df: DataFrame with close prices
         weights_df: DataFrame with target weights
         enable_sp500_short: If True, include S&P500 short position
+        risk_free_rates: Series with risk-free rates (annualized, as decimal) indexed by date
     """
     dates = close_df.index
     stocks = close_df.columns
@@ -509,10 +529,37 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True):
                 # If entry=100, current=95, shares=10: P&L = (100-95)*10 = +50 (profit, correct)
                 # If entry=100, current=105, shares=10: P&L = (100-105)*10 = -50 (loss, correct)
                 sp500_short_pnl_final = sp500_short_shares * (sp500_short_entry_price - current_sp500_price_final)
+                
+                # Calculate and deduct borrowing fee for short S&P500 position
+                # Borrowing fee: 0.35% annualized (conservative, actual is 0.25%)
+                # Daily fee = (annual_rate / 365) * short_position_value
+                short_position_value = sp500_short_shares * current_sp500_price_final
+                daily_borrowing_fee = (SP500_BORROWING_FEE_ANNUAL / 365.0) * short_position_value
+                capital -= daily_borrowing_fee
+                total_commission += daily_borrowing_fee  # Track as part of costs
             else:
                 sp500_short_pnl_final = 0.0
         else:
             sp500_short_pnl_final = 0.0
+        
+        # Calculate and add interest on cash (risk-free rate)
+        # Interest is earned on positive cash balance only
+        if risk_free_rates is not None and capital > 0:
+            # Get risk-free rate for this date (use forward fill if exact date not found)
+            if date in risk_free_rates.index:
+                rf_rate = risk_free_rates[date]
+            else:
+                # Find the most recent available rate
+                available_dates = risk_free_rates.index[risk_free_rates.index <= date]
+                if len(available_dates) > 0:
+                    rf_rate = risk_free_rates[available_dates[-1]]
+                else:
+                    rf_rate = 0.0  # Default to 0 if no rate available
+            
+            # Calculate daily interest: (annual_rate / 365) * cash_balance
+            if pd.notna(rf_rate) and rf_rate > 0:
+                daily_interest = (rf_rate / 365.0) * capital
+                capital += daily_interest
         
         # Recalculate total_value after all rebalancing (stocks and S&P500)
         # Portfolio value = cash + stock holdings + unrealized S&P500 short P&L
@@ -725,7 +772,7 @@ def get_sp500_bh_return(start_date, end_date):
         print(f"Warning: Error fetching S&P500 data: {e}")
         return None
 
-def run_single_backtest(close_df, all_data, period_name=""):
+def run_single_backtest(close_df, all_data, risk_free_rates=None, period_name=""):
     """Run a single backtest and return results for both with and without S&P500 short"""
     # Calculate VWAP
     vwap = calculate_vwap(close_df, all_data)
@@ -741,11 +788,11 @@ def run_single_backtest(close_df, all_data, period_name=""):
     
     # Run backtest WITH S&P500 short
     print(f"\nRunning {period_name} backtest WITH S&P500 short...")
-    portfolio_df_short, final_shares_short, shares_tracking_df_short, total_commission_short, margin_pct_time_short, stop_loss_triggers_short = run_backtest(close_df, top_weights, enable_sp500_short=True)
+    portfolio_df_short, final_shares_short, shares_tracking_df_short, total_commission_short, margin_pct_time_short, stop_loss_triggers_short = run_backtest(close_df, top_weights, enable_sp500_short=True, risk_free_rates=risk_free_rates)
     
     # Run backtest WITHOUT S&P500 short
     print(f"\nRunning {period_name} backtest WITHOUT S&P500 short...")
-    portfolio_df_no_short, final_shares_no_short, shares_tracking_df_no_short, total_commission_no_short, margin_pct_time_no_short, stop_loss_triggers_no_short = run_backtest(close_df, top_weights, enable_sp500_short=False)
+    portfolio_df_no_short, final_shares_no_short, shares_tracking_df_no_short, total_commission_no_short, margin_pct_time_no_short, stop_loss_triggers_no_short = run_backtest(close_df, top_weights, enable_sp500_short=False, risk_free_rates=risk_free_rates)
     
     # Calculate strategy returns for both versions
     initial_value = INITIAL_CAPITAL
@@ -839,7 +886,7 @@ def run_single_backtest(close_df, all_data, period_name=""):
 
 def main():
     # Load data
-    close_df, all_data = load_data()
+    close_df, all_data, risk_free_rates = load_data()
     
     # Split data into 70% train and 30% test
     total_days = len(close_df)
@@ -847,6 +894,17 @@ def main():
     
     train_close_df = close_df.iloc[:train_split_idx]
     test_close_df = close_df.iloc[train_split_idx:]
+    
+    # Split risk-free rates if available
+    train_risk_free_rates = None
+    test_risk_free_rates = None
+    if risk_free_rates is not None:
+        train_start = train_close_df.index[0]
+        train_end = train_close_df.index[-1]
+        test_start = test_close_df.index[0]
+        test_end = test_close_df.index[-1]
+        train_risk_free_rates = risk_free_rates[(risk_free_rates.index >= train_start) & (risk_free_rates.index <= train_end)]
+        test_risk_free_rates = risk_free_rates[(risk_free_rates.index >= test_start) & (risk_free_rates.index <= test_end)]
     
     print(f"\n{'='*80}")
     print("DATA SPLIT")
@@ -859,13 +917,13 @@ def main():
     print(f"\n{'='*80}")
     print("Running TRAIN backtest...")
     print(f"{'='*80}")
-    train_results = run_single_backtest(train_close_df, all_data, "Train")
+    train_results = run_single_backtest(train_close_df, all_data, train_risk_free_rates, "Train")
     
     # Run backtest on test data
     print(f"\n{'='*80}")
     print("Running TEST backtest...")
     print(f"{'='*80}")
-    test_results = run_single_backtest(test_close_df, all_data, "Test")
+    test_results = run_single_backtest(test_close_df, all_data, test_risk_free_rates, "Test")
     
     # Display results side-by-side
     print(f"\n{'='*120}")

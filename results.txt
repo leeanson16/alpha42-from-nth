@@ -52,10 +52,19 @@ Max Drawdown (%)                                       13.36                    
 Sortino Ratio                                           2.53                                     0.74
 
 
-Scale 0.5 SHORT
+Interest on cash, and Scale 0.5 SHORT
 PERFORMANCE METRICS - STRATEGY (WITH SHORT)
-CAGR (%)                                                                    22.52                                     7.77
-Sharpe Ratio                                                                 2.10                                     0.77
-Max Drawdown (%)                                                            10.36                                    12.37
+CAGR (%)                                                                    23.31                                     8.83
+Sharpe Ratio                                                                 2.17                                     0.86
+Max Drawdown (%)                                                            10.35                                    12.29
 MDD Period                                                    2008-10-30 to 2008-11-19                      2020-01-13 to 2020-03-18
-Sortino Ratio                                                                3.46                                     1.25
+Sortino Ratio                                                                3.57                                     1.41
+
+
+with borrowing fee
+PERFORMANCE METRICS - STRATEGY (WITH SHORT)
+CAGR (%)                                                                    23.16                                     8.66
+Sharpe Ratio                                                                 2.16                                     0.85
+Max Drawdown (%)                                                            10.35                                    12.31
+MDD Period                                                    2008-10-30 to 2008-11-19                      2020-01-13 to 2020-03-18
+Sortino Ratio                                                                3.55                                     1.38
