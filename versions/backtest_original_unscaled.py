@@ -198,10 +198,9 @@ def select_top_stocks(weights, top_n=TOP_N_STOCKS):
         # Set all others to 0
         top_weights.loc[date, ~top_weights.columns.isin(top_n_indices)] = 0
     
-    # Normalize weights to 50% (only for selected stocks)
-    # The remaining 50% will be held as cash
+    # Normalize weights (only for selected stocks)
     sum_weights = top_weights.sum(axis=1)
-    top_weights = top_weights.div(sum_weights, axis=0) * 0.5  # Normalize to 50%
+    top_weights = top_weights.div(sum_weights, axis=0)
     
     return top_weights
 
@@ -353,10 +352,9 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True):
         # IMPORTANT: Calculate target size BEFORE any rebalancing to avoid feedback loop
         if enable_sp500_short and sp500_prices is not None and date in sp500_prices.index and not pd.isna(sp500_prices[date]):
             current_sp500_price = sp500_prices[date]
-            # Short 50% of the base portfolio value (cash + stock holdings, excluding S&P500 P&L)
-            # This matches the 50% long stock position, keeping the strategy market-neutral
+            # Short the base portfolio value (cash + stock holdings, excluding S&P500 P&L)
             # This is calculated BEFORE we add short sale proceeds to avoid feedback loop
-            target_sp500_short_value = base_portfolio_value * 0.5  # Short 50% of base portfolio value
+            target_sp500_short_value = base_portfolio_value  # Short base portfolio value worth
             # Ensure we don't divide by zero or get inf
             if current_sp500_price > 1e-10 and np.isfinite(target_sp500_short_value) and np.isfinite(current_sp500_price):
                 target_sp500_short_shares = target_sp500_short_value / current_sp500_price

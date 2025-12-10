@@ -11,6 +11,8 @@ INITIAL_CAPITAL = 50000
 TOP_N_STOCKS = 22
 REBALANCE_THRESHOLD = 0.01  # 1% change in shares
 PROGRESS_INTERVAL = 2000
+VOLATILITY_LOOKBACK = 60  # Days to look back for volatility calculation
+VOLATILITY_TARGET = 0.15  # Target annualized volatility (15%)
 # STOP_LOSS_PCT = 0.05  # 5% stop loss
 # STOP_LOSS_INACTIVE_DAYS = 250  # Days to keep stock inactive after stop loss
 
@@ -198,10 +200,9 @@ def select_top_stocks(weights, top_n=TOP_N_STOCKS):
         # Set all others to 0
         top_weights.loc[date, ~top_weights.columns.isin(top_n_indices)] = 0
     
-    # Normalize weights to 50% (only for selected stocks)
-    # The remaining 50% will be held as cash
+    # Normalize weights (only for selected stocks)
     sum_weights = top_weights.sum(axis=1)
-    top_weights = top_weights.div(sum_weights, axis=0) * 0.5  # Normalize to 50%
+    top_weights = top_weights.div(sum_weights, axis=0)
     
     return top_weights
 
@@ -265,6 +266,10 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True):
     
     # Track previous target shares for rebalancing
     prev_target_shares = pd.Series(0.0, index=stocks)
+    
+    # Track portfolio returns for volatility calculation
+    portfolio_returns = []  # List of daily returns
+    prev_portfolio_value = INITIAL_CAPITAL  # Previous day's portfolio value
     
     print(f"\nStarting backtest from {dates[0]} to {dates[-1]}")
     print(f"Total days: {len(dates)}")
@@ -353,10 +358,9 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True):
         # IMPORTANT: Calculate target size BEFORE any rebalancing to avoid feedback loop
         if enable_sp500_short and sp500_prices is not None and date in sp500_prices.index and not pd.isna(sp500_prices[date]):
             current_sp500_price = sp500_prices[date]
-            # Short 50% of the base portfolio value (cash + stock holdings, excluding S&P500 P&L)
-            # This matches the 50% long stock position, keeping the strategy market-neutral
+            # Short the base portfolio value (cash + stock holdings, excluding S&P500 P&L)
             # This is calculated BEFORE we add short sale proceeds to avoid feedback loop
-            target_sp500_short_value = base_portfolio_value * 0.5  # Short 50% of base portfolio value
+            target_sp500_short_value = base_portfolio_value  # Short base portfolio value worth
             # Ensure we don't divide by zero or get inf
             if current_sp500_price > 1e-10 and np.isfinite(target_sp500_short_value) and np.isfinite(current_sp500_price):
                 target_sp500_short_shares = target_sp500_short_value / current_sp500_price
@@ -433,7 +437,25 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True):
             sp500_short_pnl = 0.0
         
         # Calculate target dollar amounts (using total_value that includes S&P500 short P&L)
-        target_dollars = target_weights * total_value
+        base_target_dollars = target_weights * total_value
+        
+        # Volatility targeting: scale by recent volatility
+        volatility_scale = 1.0  # Default scale (no scaling)
+        # Only apply volatility targeting after we have enough return history
+        # Don't require existing positions - allow it to work from the start
+        if len(portfolio_returns) >= VOLATILITY_LOOKBACK:
+            # Calculate recent volatility (annualized)
+            recent_returns = pd.Series(portfolio_returns[-VOLATILITY_LOOKBACK:])
+            recent_volatility = recent_returns.std() * np.sqrt(252)  # Annualized volatility
+            
+            if recent_volatility > 1e-10:  # Avoid division by zero
+                # Scale inversely to volatility: if volatility is high, reduce position size
+                # Scale = target_volatility / current_volatility
+                volatility_scale = min(VOLATILITY_TARGET / recent_volatility, 2.0)  # Cap at 2x to avoid excessive leverage
+                volatility_scale = max(volatility_scale, 0.5)  # Floor at 0.5x to ensure positions are taken
+        
+        # Apply volatility scaling to target dollars
+        target_dollars = base_target_dollars * volatility_scale
         
         # Calculate target shares
         target_shares = target_dollars / prices
@@ -526,6 +548,11 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True):
         # Track margin usage (when capital is negative)
         if capital < 0:
             margin_days += 1
+        
+        # Calculate daily return for volatility tracking
+        daily_return = (total_value_final / prev_portfolio_value - 1) if prev_portfolio_value > 1e-10 else 0.0
+        portfolio_returns.append(daily_return)
+        prev_portfolio_value = total_value_final
         
         # Update portfolio value (including S&P500 short P&L)
         portfolio_value.append({

@@ -1,5 +1,61 @@
+                        test                    train     
 PERFORMANCE METRICS - STRATEGY (NO SHORT)
-CAGR (%)                                               53.86                                    39.98
-Sharpe Ratio                                            1.69                                     1.23
-Max Drawdown (%)                                       54.61                                    45.06
-Sortino Ratio                                           2.44                                     1.74
+CAGR (%)                                        53.86   
+                        39.98
+Sharpe Ratio                                    1.69    
+                        1.23
+Max Drawdown (%)                                54.61   
+                        45.06
+Sortino Ratio                                   2.44    
+                        1.74
+PERFORMANCE METRICS - STRATEGY (WITH SHORT)
+CAGR (%)                                                                    46.77                                    17.24
+Sharpe Ratio                                                                 2.04                                     0.88
+Max Drawdown (%)                                                            20.99                                    19.93
+MDD Period                                                    2012-02-16 to 2012-10-24                      2024-01-05 to 2024-06-18
+Sortino Ratio                                                                3.35                                     1.44
+
+
+scaling 1/5.461 fails with vol decay
+
+
+Scale daily target_dollars by recent volatility (volatility targeting)
+PERFORMANCE METRICS - STRATEGY (NO SHORT)
+
+CAGR (%)                                               43.70
+                           25.22
+Sharpe Ratio                                            1.86
+                            1.15
+Max Drawdown (%)                                       36.76
+                           30.67
+
+
+rebalance has no effect
+
+
+SL
+PERFORMANCE METRICS - STRATEGY (NO SHORT)
+
+CAGR (%)                                               50.46
+                           34.31
+Sharpe Ratio                                            1.77
+                            1.20
+Max Drawdown (%)                                       42.65
+                           38.15
+
+
+Scale and SL combined (doesn't work, test cagr sharpe too low)
+PERFORMANCE METRICS - STRATEGY (NO SHORT)
+CAGR (%)                                               22.99                                     4.46
+Sharpe Ratio                                            1.69                                     0.51
+Max Drawdown (%)                                       13.36                                    18.36
+Sortino Ratio                                           2.53                                     0.74
+
+
+Scale 0.5 SHORT
+PERFORMANCE METRICS - STRATEGY (WITH SHORT)
+CAGR (%)                                                                    22.52                                     7.77
+Sharpe Ratio                                                                 2.10                                     0.77
+Max Drawdown (%)                                                            10.36                                    12.37
+MDD Period                                                    2008-10-30 to 2008-11-19                      2020-01-13 to 2020-03-18
+Sortino Ratio                                                                3.46                                     1.25
