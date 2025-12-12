@@ -68,3 +68,12 @@ Sharpe Ratio                                                                 2.1
 Max Drawdown (%)                                                            10.35                                    12.31
 MDD Period                                                    2008-10-30 to 2008-11-19                      2020-01-13 to 2020-03-18
 Sortino Ratio                                                                3.55                                     1.38
+
+
+with 10% rebalance, SPY
+PERFORMANCE METRICS - STRATEGY (WITH SHORT)
+CAGR (%)                                                                    24.66                                    10.72
+Sharpe Ratio                                                                 2.26                                     1.03
+Max Drawdown (%)                                                            10.35                                    10.84
+MDD Period                                                    2012-02-16 to 2012-10-22                      2018-06-12 to 2018-10-09
+Sortino Ratio                                                                3.75                                     1.68

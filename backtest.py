@@ -9,14 +9,14 @@ warnings.filterwarnings('ignore')
 # Configuration
 INITIAL_CAPITAL = 50000
 TOP_N_STOCKS = 22
-REBALANCE_THRESHOLD = 0.01  # 1% change in shares
+REBALANCE_THRESHOLD = 0.1
 PROGRESS_INTERVAL = 2000
 # STOP_LOSS_PCT = 0.05  # 5% stop loss
 # STOP_LOSS_INACTIVE_DAYS = 250  # Days to keep stock inactive after stop loss
 SP500_BORROWING_FEE_ANNUAL = 0.0035  # 0.35% annualized borrowing fee for short S&P500 (conservative, actual is 0.25%)
 
 def parse_ohlc_data(all_data, close_df):
-    """Parse OHLC data from all_stock_data.csv in various formats"""
+    """Parse OHLC data from all_stock_data.csv in open_df, high_df, low_df"""
     cols = all_data.columns.tolist()
     
     # Check if multi-index columns (stock, OHLC)
@@ -102,7 +102,7 @@ def parse_ohlc_data(all_data, close_df):
     return None, None, None
 
 def load_data():
-    """Load close price data and OHLC data if available"""
+    """Return close_df, (open_df, high_df, low_df), risk_free_rates data if available"""
     print("Loading data...")
     
     # Load close prices
@@ -174,6 +174,7 @@ def calculate_vwap(close_df, ohlc_data=None):
     else:
         # Approximate VWAP as close price (since we only have close data)
         # In real scenario, VWAP = (O + H + L + C) / 4
+        print("calculate_vwap: no OHLC data, using close price as VWAP")
         vwap = close_df.copy()
     
     return vwap
@@ -195,12 +196,44 @@ def calculate_weights(rank_vwap_minus_close, rank_vwap_plus_close):
     """Calculate weights: rank(vwap-close)/rank(vwap+close) / SUM(...)"""
     # Calculate ratio for each stock
     ratio = rank_vwap_minus_close / rank_vwap_plus_close
+    ratio = ratio.replace([np.inf, -np.inf], np.nan)
     
     # Sum across all stocks for each day
     sum_ratio = ratio.sum(axis=1)
+    # Guard against inf/NaN/zero
+    # Print sum_ratio replace diagnostics
+    total_entries = sum_ratio.size
+    inf_entries = np.isinf(sum_ratio).sum()
+    nan_entries = sum_ratio.isna().sum()
+    if inf_entries > 0 or nan_entries > 0:
+        print(f"calculate_weights: {inf_entries} inf, {nan_entries} nan out of {total_entries} entries (will be replaced)")
+    sum_ratio = sum_ratio.replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    # Print sum_ratio replace diagnostics
+    zero_entries = (sum_ratio == 0).sum()
+    if zero_entries > 0:
+        print(f"calculate_weights: {zero_entries} zero out of {total_entries} entries (will be replaced)")
+    safe_divisor = sum_ratio.replace(0, np.nan)
     
     # Normalize: divide by sum
-    weights = ratio.div(sum_ratio, axis=0)
+    weights = ratio.div(safe_divisor, axis=0).fillna(0)
+    
+    # Fallback: if a row sums to ~0 (all zero after guard), assign equal weights
+    zero_rows = weights.sum(axis=1).abs() < 1e-12
+    if zero_rows.any():
+        equal_wt = 1.0 / len(weights.columns)
+        weights.loc[zero_rows, :] = equal_wt
+        print(f"Fallback: assigned equal weights to {len(zero_rows)} days")
+    
+    # Debug first few days
+    try:
+        debug_dates = weights.index[:3]
+        for d in debug_dates:
+            nonzero = (weights.loc[d] != 0).sum()
+            wt_sum = weights.loc[d].sum()
+            print(f"[DEBUG calculate_weights] {d.date()}: nonzero={nonzero}, sum={wt_sum:.6f}")
+    except Exception:
+        pass
     
     return weights
 
@@ -220,7 +253,34 @@ def select_top_stocks(weights, top_n=TOP_N_STOCKS):
     # Normalize weights to 50% (only for selected stocks)
     # The remaining 50% will be held as cash
     sum_weights = top_weights.sum(axis=1)
-    top_weights = top_weights.div(sum_weights, axis=0) * 0.5  # Normalize to 50%
+    # Fallback: if sum_weights is zero for a day, assign equal weights to that day's top_n_indices
+    zero_sum_dates = sum_weights[abs(sum_weights) < 1e-12].index
+    if len(zero_sum_dates) > 0:
+        for d in zero_sum_dates:
+            # Reconstruct top_n for this date
+            day = weights.loc[d]
+            top_n_indices = day.nlargest(top_n).index
+            if len(top_n_indices) > 0:
+                equal_wt = 0.5 / len(top_n_indices)
+                top_weights.loc[d, :] = 0.0
+                top_weights.loc[d, top_n_indices] = equal_wt
+        # Recompute sum_weights after fallback
+        sum_weights = top_weights.sum(axis=1)
+    
+    # Guard against inf/NaN/zero to avoid collapsing weights
+    sum_weights = sum_weights.replace([np.inf, -np.inf], np.nan).fillna(0)
+    safe_divisor = sum_weights.replace(0, np.nan)
+    top_weights = top_weights.div(safe_divisor, axis=0).fillna(0) * 0.5  # Normalize to 50%
+    
+    # Debug: print first few days' weight stats
+    try:
+        debug_dates = top_weights.index[:3]
+        for d in debug_dates:
+            nonzero = (top_weights.loc[d] != 0).sum()
+            wt_sum = top_weights.loc[d].sum()
+            print(f"[DEBUG select_top_stocks] {d.date()}: nonzero={nonzero}, sum={wt_sum:.6f}")
+    except Exception:
+        pass
     
     return top_weights
 
@@ -236,13 +296,13 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True, risk_free_rates=
     dates = close_df.index
     stocks = close_df.columns
     
-    # Get S&P500 prices for the backtest period (only if short is enabled)
+    # Get SPY prices for the backtest period (only if short is enabled)
     start_date = dates[0]
     end_date = dates[-1]
     sp500_prices = None
     if enable_sp500_short:
         try:
-            sp500 = yf.Ticker("^GSPC")
+            sp500 = yf.Ticker("SPY")
             if isinstance(start_date, pd.Timestamp):
                 start_str = start_date.strftime('%Y-%m-%d')
             else:
@@ -383,7 +443,7 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True, risk_free_rates=
             else:
                 target_sp500_short_shares = 0.0
             
-            # Check if we need to rebalance S&P500 short position (>1% change)
+            # Check if we need to rebalance S&P500 short position (>x% change)
             if sp500_short_shares > 1e-10:
                 sp500_pct_change = abs(target_sp500_short_shares - sp500_short_shares) / sp500_short_shares
             else:
@@ -453,7 +513,11 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True, risk_free_rates=
             sp500_short_pnl = 0.0
         
         # Calculate target dollar amounts (using total_value that includes S&P500 short P&L)
-        target_dollars = target_weights * total_value
+        # If weights are all zero/NaN, skip rebalancing for this day
+        if target_weights.isna().all() or abs(target_weights.sum()) < 1e-12:
+            target_dollars = pd.Series(0.0, index=stocks)
+        else:
+            target_dollars = target_weights * total_value
         
         # Calculate target shares
         target_shares = target_dollars / prices
@@ -477,7 +541,7 @@ def run_backtest(close_df, weights_df, enable_sp500_short=True, risk_free_rates=
                 # If current shares is 0 but target is not, that's a 100% change (definitely rebalance)
                 pct_change = 1.0 if abs(target_share_count) > 1e-10 else 0.0
             
-            # Rebalance if change > 1%
+            # Rebalance if change > x%
             if pct_change > REBALANCE_THRESHOLD:
                 # Calculate needed shares change
                 shares_diff = target_share_count - current_shares
